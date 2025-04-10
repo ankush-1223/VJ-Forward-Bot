@@ -744,3 +744,60 @@ async def complete_time(total_files, files_per_minute=30):
 # Don't Remove Credit Tg - @VJ_Botz
 # Subscribe YouTube Channel For Amazing Bot https://youtube.com/@Tech_VJ
 # Ask Doubt on telegram @KingVJ01
+
+# NEW: Extract message ID from Telegram message link
+async def extract_msg_id(link):
+    match = re.search(r"/(-?\\d+)/(\\d+)", link)
+    if match:
+        return int(match.group(1)), int(match.group(2))
+    return None, None
+
+# NEW: Start range-based forwarding
+async def range_forward(client, from_chat_id, to_chat_id, start_id, end_id, delay=Config.DELAY, batch=Config.BATCH):
+    try:
+        msg_ids = list(range(start_id, end_id + 1))
+        for i in range(0, len(msg_ids), batch):
+            batch_ids = msg_ids[i:i+batch]
+            await client.forward_messages(to_chat_id, from_chat_id, batch_ids)
+            await asyncio.sleep(delay)
+    except FloodWait as e:
+        await asyncio.sleep(e.value)
+        await range_forward(client, from_chat_id, to_chat_id, start_id, end_id, delay, batch)
+
+# MODIFIED: Main callback for forwarding entry
+@Client.on_message(filters.command("range"))
+async def custom_range_forward(client, message):
+    try:
+        args = message.text.split()
+        if len(args) != 3:
+            return await message.reply("Usage: /range <start_msg_link> <end_msg_link>")
+
+        start_link, end_link = args[1], args[2]
+        from_chat_id, start_id = await extract_msg_id(start_link)
+        _, end_id = await extract_msg_id(end_link)
+
+        if not all([from_chat_id, start_id, end_id]):
+            return await message.reply("Invalid message links")
+
+        # Ask user for target chat
+        temp.FWD_SESS[message.from_user.id] = {
+            'from': from_chat_id,
+            'start_id': start_id,
+            'end_id': end_id,
+            'step': 'await_target'
+        }
+        await message.reply("Send me the target channel username or ID")
+
+    except Exception as e:
+        await message.reply(f"Error: {str(e)}")
+
+# Handle follow-up message for target chat
+@Client.on_message(filters.text & filters.private)
+async def handle_target_chat(client, message):
+    user_id = message.from_user.id
+    session = temp.FWD_SESS.get(user_id)
+    if session and session.get('step') == 'await_target':
+        to_chat_id = message.text.strip()
+        await range_forward(client, session['from'], to_chat_id, session['start_id'], session['end_id'])
+        await message.reply("✅ Messages forwarded from range.")
+        del temp.FWD_SESS[user_id]
