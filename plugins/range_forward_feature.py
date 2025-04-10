@@ -1,3 +1,4 @@
+
 # Don't Remove Credit Tg - @VJ_Botz
 # Subscribe YouTube Channel For Amazing Bot https://youtube.com/@Tech_VJ
 # Ask Doubt on telegram @KingVJ01
@@ -25,81 +26,92 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 TEXT = Script.TEXT
 
-# NEW: Extract message ID from Telegram message link
+# Extract message ID from Telegram message link
 async def extract_msg_id(link):
     match = re.search(r"/(-?\d+)/(\d+)", link)
     if match:
         return int(match.group(1)), int(match.group(2))
     return None, None
 
-# NEW: Start range-based forwarding with logging, limit and flood control
-MAX_MESSAGES = 500  # prevent overload, only for range command
+# Range forwarding logic
+MAX_MESSAGES = 500
 
 async def range_forward(client, from_chat_id, to_chat_id, start_id, end_id, delay=Config.DELAY, batch=Config.BATCH):
     total = end_id - start_id + 1
-    # Apply limit only for /range, not the default clone process
     if temp.FWD_SESS.get("__range_mode__") and total > MAX_MESSAGES:
-        logger.warning(f"Range too big: {total} messages. Max allowed is {MAX_MESSAGES}.")
+        await client.send_message(to_chat_id, f"❌ You can only forward up to {MAX_MESSAGES} messages in range mode.")
         return
 
     try:
         msg_ids = list(range(start_id, end_id + 1))
-        logger.info(f"Starting forwarding from {start_id} to {end_id} (Total: {len(msg_ids)})")
+        await client.send_message(to_chat_id, f"🔁 Starting to forward {total} messages...")
 
         for i in range(0, len(msg_ids), batch):
             batch_ids = msg_ids[i:i+batch]
-            logger.info(f"Forwarding batch: {batch_ids}")
             try:
                 await client.forward_messages(to_chat_id, from_chat_id, batch_ids)
             except FloodWait as e:
-                wait_time = max(e.value, 60)  # force minimum wait of 60 seconds
-                logger.warning(f"FloodWait: sleeping for {wait_time} seconds")
+                wait_time = max(e.value, 60)
+                await client.send_message(to_chat_id, f"⏱️ Rate limit hit. Sleeping for {wait_time} seconds...")
                 await asyncio.sleep(wait_time)
                 await client.forward_messages(to_chat_id, from_chat_id, batch_ids)
-
             await asyncio.sleep(delay)
 
-        logger.info("✅ Range forwarding completed.")
+        await client.send_message(to_chat_id, "✅ Range forwarding completed.")
 
     except Exception as ex:
-        logger.error(f"Error during range forward: {ex}")
+        await client.send_message(to_chat_id, f"❌ Error: {ex}")
 
-# MODIFIED: Main callback for forwarding entry
+# Range command handler
 @Client.on_message(filters.command("range"))
 async def custom_range_forward(client, message):
     try:
-        args = message.text.split()
-        if len(args) != 3:
-            return await message.reply("Usage: /range <start_msg_link> <end_msg_link>")
-
-        start_link, end_link = args[1], args[2]
-        from_chat_id, start_id = await extract_msg_id(start_link)
-        _, end_id = await extract_msg_id(end_link)
-
-        if not all([from_chat_id, start_id, end_id]):
-            return await message.reply("Invalid message links")
-
-        # Ask user for target chat
-        temp.FWD_SESS[message.from_user.id] = {
-            'from': from_chat_id,
-            'start_id': start_id,
-            'end_id': end_id,
-            'step': 'await_target'
-        }
-        temp.FWD_SESS["__range_mode__"] = True
-        await message.reply("Send me the target channel username or ID")
-
+        await message.reply_text(
+            "📝 Send me the first message link to begin range forwarding.",
+        )
+        temp.FWD_SESS[message.from_user.id] = {"step": "get_start"}
     except Exception as e:
         await message.reply(f"Error: {str(e)}")
 
-# Handle follow-up message for target chat
+# Handle step-based input for range
 @Client.on_message(filters.text & filters.private)
-async def handle_target_chat(client, message):
+async def handle_range_input(client, message):
     user_id = message.from_user.id
     session = temp.FWD_SESS.get(user_id)
-    if session and session.get('step') == 'await_target':
-        to_chat_id = message.text.strip()
-        await range_forward(client, session['from'], to_chat_id, session['start_id'], session['end_id'])
-        await message.reply("✅ Messages forwarded from range.")
+    if not session:
+        return
+
+    step = session.get("step")
+    text = message.text.strip()
+
+    if step == "get_start":
+        from_chat_id, start_id = await extract_msg_id(text)
+        if not from_chat_id:
+            return await message.reply("❌ Invalid message link. Send a valid start message link.")
+        temp.FWD_SESS[user_id] = {
+            "step": "get_end",
+            "from": from_chat_id,
+            "start_id": start_id
+        }
+        return await message.reply("✅ Now send the last message link of the range.")
+
+    if step == "get_end":
+        _, end_id = await extract_msg_id(text)
+        if not end_id:
+            return await message.reply("❌ Invalid message link. Send a valid end message link.")
+        temp.FWD_SESS[user_id]["end_id"] = end_id
+        temp.FWD_SESS[user_id]["step"] = "get_target"
+        return await message.reply("📥 Now send the target chat ID or @username to forward messages to.")
+
+    if step == "get_target":
+        to_chat_id = text
+        sess = temp.FWD_SESS[user_id]
+        await range_forward(
+            client,
+            from_chat_id=sess["from"],
+            to_chat_id=to_chat_id,
+            start_id=sess["start_id"],
+            end_id=sess["end_id"]
+        )
         del temp.FWD_SESS[user_id]
         temp.FWD_SESS.pop("__range_mode__", None)
