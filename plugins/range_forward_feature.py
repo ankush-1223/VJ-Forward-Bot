@@ -1,4 +1,3 @@
-
 # Don't Remove Credit Tg - @VJ_Botz
 # Subscribe YouTube Channel For Amazing Bot https://youtube.com/@Tech_VJ
 # Ask Doubt on telegram @KingVJ01
@@ -36,7 +35,11 @@ async def extract_msg_id(link):
 # Range forwarding logic
 MAX_MESSAGES = 500
 
-async def range_forward(client, from_chat_id, to_chat_id, start_id, end_id, delay=Config.DELAY, batch=Config.BATCH):
+# Use fallback values if not in Config
+DELAY = getattr(Config, "DELAY", 2)
+BATCH = getattr(Config, "BATCH", 5)
+
+async def range_forward(client, from_chat_id, to_chat_id, start_id, end_id, delay=DELAY, batch=BATCH):
     total = end_id - start_id + 1
     if temp.FWD_SESS.get("__range_mode__") and total > MAX_MESSAGES:
         await client.send_message(to_chat_id, f"❌ You can only forward up to {MAX_MESSAGES} messages in range mode.")
